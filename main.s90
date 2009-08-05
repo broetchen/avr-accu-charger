@@ -1,0 +1,159 @@
+        NAME main
+
+        RTMODEL "__64bit_doubles", "disabled"
+        RTMODEL "__cpu", "0"
+        RTMODEL "__cpu_name", "AT90tiny26"
+        RTMODEL "__enhanced_core", "disabled"
+        RTMODEL "__has_elpm", "false"
+        RTMODEL "__memory_model", "1"
+        RTMODEL "__rt_version", "2.30"
+
+        RSEG CSTACK:DATA:NOROOT(0)
+        RSEG RSTACK:DATA:NOROOT(0)
+
+        EXTERN ?ML_FLASH_SRAM_16_8_L07
+        EXTERN USI_UART_Flush_Buffers
+        FUNCTION USI_UART_Flush_Buffers,0202H
+        EXTERN USI_UART_Initialise_Receiver
+        FUNCTION USI_UART_Initialise_Receiver,0202H
+        EXTERN USI_UART_Data_In_Receive_Buffer
+        FUNCTION USI_UART_Data_In_Receive_Buffer,0202H
+        EXTERN USI_UART_Transmit_Byte
+        FUNCTION USI_UART_Transmit_Byte,0202H
+        EXTERN USI_UART_Receive_Byte
+        FUNCTION USI_UART_Receive_Byte,0202H
+
+        PUBWEAK _A_MCUCR
+        PUBWEAK __?EEARL
+        PUBWEAK __?EECR
+        PUBWEAK __?EEDR
+        PUBLIC main
+        FUNCTION main,021a03H
+        LOCFRAME CSTACK, 21, STACK
+        LOCFRAME RSTACK, 2, STACK
+;     1 /*****************************************************************************
+;     2 *
+;     3 * Copyright (C) 2003 Atmel Corporation
+;     4 *
+;     5 * File          : main.c
+;     6 * Compiler      : IAR EWAAVR 2.28a
+;     7 * Created       : 18.07.2002 by JLL
+;     8 * Modified      : 11-07-2003 by LTA
+;     9 *
+;    10 * Support mail  : avr@atmel.com
+;    11 *
+;    12 * Description   : Example showing how you could use the USI_UART drivers
+;    13 *
+;    14 *
+;    15 ****************************************************************************/
+;    16 
+;    17 #include <ioavr.h>  // Note there is a bug in this file that includes iotiny22.h instead of iotiny26.h
+
+        ASEGN ABSOLUTE:DATA:NOROOT,055H
+; union <unnamed> volatile __io _A_MCUCR;
+_A_MCUCR:
+	DS 1
+;    18 #include <inavr.h>
+;    19 #include "USI_UART_config.h"
+;    20 
+
+        RSEG CODE:CODE:NOROOT(1)
+;    21 __C_task void main( void )
+;    22 {
+; __nearfunc __C_task void main();
+main:
+        FUNCALL main, USI_UART_Flush_Buffers
+        LOCFRAME CSTACK, 21, STACK
+        LOCFRAME RSTACK, 2, STACK
+        FUNCALL main, USI_UART_Initialise_Receiver
+        LOCFRAME CSTACK, 21, STACK
+        LOCFRAME RSTACK, 2, STACK
+        FUNCALL main, USI_UART_Data_In_Receive_Buffer
+        LOCFRAME CSTACK, 21, STACK
+        LOCFRAME RSTACK, 2, STACK
+        FUNCALL main, USI_UART_Transmit_Byte
+        LOCFRAME CSTACK, 21, STACK
+        LOCFRAME RSTACK, 2, STACK
+        FUNCALL main, USI_UART_Receive_Byte
+        LOCFRAME CSTACK, 21, STACK
+        LOCFRAME RSTACK, 2, STACK
+        FUNCALL main, USI_UART_Transmit_Byte
+        LOCFRAME CSTACK, 21, STACK
+        LOCFRAME RSTACK, 2, STACK
+	SUBI	R28,21
+;    23     unsigned char myString[] = "\n\rYou just sent me: ";
+	MOV	R16,R28
+	LDI	R30,LOW(`?<Constant "\\n\\rYou just sent me: ">`)
+	LDI	R31,(`?<Constant "\\n\\rYou just sent me: ">`) >> 8
+	LDI	R20,21
+	RCALL	?ML_FLASH_SRAM_16_8_L07
+;    24   
+;    25     
+;    26     unsigned char counter;
+;    27     
+;    28     USI_UART_Flush_Buffers();
+	RCALL	USI_UART_Flush_Buffers
+;    29     USI_UART_Initialise_Receiver();                                         // Initialisation for USI_UART receiver
+	RCALL	USI_UART_Initialise_Receiver
+;    30     __enable_interrupt();                                                   // Enable global interrupts
+	SEI
+;    31     
+;    32     MCUCR = (1<<SE)|(0<<SM1)|(0<<SM0);                                      // Enable Sleepmode: Idle
+	LDI	R16,32
+	OUT	0x35,R16
+;    33     
+;    34     for( ; ; )                                                              // Run forever
+;    35     {
+;    36         if( USI_UART_Data_In_Receive_Buffer() )
+??main_0:
+	RCALL	USI_UART_Data_In_Receive_Buffer
+	TST	R16
+	BREQ	??main_1
+;    37         {  
+;    38             for(counter = 0; counter < 20; counter++)                       // Echo myString[]
+	MOV	R26,R28
+	LDI	R24,20
+;    39             {
+;    40                 USI_UART_Transmit_Byte( (unsigned int)myString[counter] );     
+??main_2:
+	LD	R16,X+
+	RCALL	USI_UART_Transmit_Byte
+	DEC	R24
+	BRNE	??main_2
+;    41             }
+;    42             USI_UART_Transmit_Byte( USI_UART_Receive_Byte() );              // Echo the received character      
+	RCALL	USI_UART_Receive_Byte
+	RCALL	USI_UART_Transmit_Byte
+;    43         }    
+;    44         __sleep();                                                          // Sleep when waiting for next event
+??main_1:
+	SLEEP
+	RJMP	??main_0
+;    45     }    
+;    46 }
+
+        ASEGN ABSOLUTE:DATA:NOROOT,01cH
+__?EECR:
+
+        ASEGN ABSOLUTE:DATA:NOROOT,01dH
+__?EEDR:
+
+        ASEGN ABSOLUTE:DATA:NOROOT,01eH
+__?EEARL:
+
+        RSEG NEAR_F:CODE:NOROOT(0)
+; char __flash <Constant "\n\rYou just sent me: ">[21];
+`?<Constant "\\n\\rYou just sent me: ">`:
+	DB "\012\015You just sent me: "
+
+        END
+; 
+;      1 byte  in segment ABSOLUTE
+;     48 bytes in segment CODE
+;     21 bytes in segment NEAR_F
+; 
+;     69 bytes of CODE memory
+;      0 bytes of DATA memory (+ 1 byte shared)
+;
+;Errors: none
+;Warnings: none

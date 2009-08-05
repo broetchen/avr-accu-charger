@@ -1,0 +1,755 @@
+        NAME USI_UART
+
+        RTMODEL "__64bit_doubles", "disabled"
+        RTMODEL "__cpu", "0"
+        RTMODEL "__cpu_name", "AT90tiny26"
+        RTMODEL "__enhanced_core", "disabled"
+        RTMODEL "__has_elpm", "false"
+        RTMODEL "__memory_model", "1"
+        RTMODEL "__rt_version", "2.30"
+
+        RSEG CSTACK:DATA:NOROOT(0)
+        RSEG RSTACK:DATA:NOROOT(0)
+        RSEG TINY_Z:DATA:NOROOT(0)
+
+        EXTERN ?need_segment_init
+        EXTERN ?Register_R15_is_global_regvar
+
+        PUBWEAK `?<Segment init: TINY_Z>`
+        PUBLIC Bit_Reverse
+        FUNCTION Bit_Reverse,0203H
+        PUBLIC IO_Pin_Change_ISR
+        FUNCTION IO_Pin_Change_ISR,0233H
+        LOCFRAME CSTACK, 3, STACK
+        PUBLIC Timer0_OVF_ISR
+        FUNCTION Timer0_OVF_ISR,0233H
+        LOCFRAME CSTACK, 2, STACK
+        PUBLIC USI_Counter_Overflow_ISR
+        FUNCTION USI_Counter_Overflow_ISR,0233H
+        LOCFRAME CSTACK, 4, STACK
+        PUBLIC USI_UART_Data_In_Receive_Buffer
+        FUNCTION USI_UART_Data_In_Receive_Buffer,0203H
+        PUBLIC USI_UART_Flush_Buffers
+        FUNCTION USI_UART_Flush_Buffers,0203H
+        PUBLIC USI_UART_Initialise_Receiver
+        FUNCTION USI_UART_Initialise_Receiver,0203H
+        PUBLIC USI_UART_Initialise_Transmitter
+        FUNCTION USI_UART_Initialise_Transmitter,0203H
+        PUBLIC USI_UART_Receive_Byte
+        FUNCTION USI_UART_Receive_Byte,021203H
+        LOCFRAME RSTACK, 2, STACK
+        PUBLIC USI_UART_Transmit_Byte
+        FUNCTION USI_UART_Transmit_Byte,021203H
+        LOCFRAME CSTACK, 2, STACK
+        LOCFRAME RSTACK, 2, STACK
+        PUBWEAK _A_DDRB
+        PUBWEAK _A_GIFR
+        PUBWEAK _A_GIMSK
+        PUBWEAK _A_PINB
+        PUBWEAK _A_PORTB
+        PUBWEAK _A_TCCR0
+        PUBWEAK _A_TCNT0
+        PUBWEAK _A_TIFR
+        PUBWEAK _A_TIMSK
+        PUBWEAK _A_USICR
+        PUBWEAK _A_USIDR
+        PUBWEAK _A_USISR
+        PUBWEAK __?EEARL
+        PUBWEAK __?EECR
+        PUBWEAK __?EEDR
+;     1 /*****************************************************************************
+;     2 *
+;     3 * Copyright (C) 2003 Atmel Corporation
+;     4 *
+;     5 * File              : USI_UART.c
+;     6 * Compiler          : IAR EWAAVR 2.28a
+;     7 * Created           : 18.07.2002 by JLL
+;     8 * Modified          : 11-07-2003 by LTA
+;     9 *
+;    10 * Support mail      : avr@atmel.com
+;    11 *
+;    12 * Supported devices : ATtiny26
+;    13 *
+;    14 * Description       : Functions for USI_UART_receiver and USI_UART_transmitter.
+;    15 *                     Uses Pin Change Interrupt to detect incomming signals.
+;    16 *
+;    17 *
+;    18 ****************************************************************************/
+;    19     
+;    20 #include <ioavr.h>  // Note there is a bug in ioavr.h file that includes iotiny22.h instead of iotiny26.h.
+
+        ASEGN ABSOLUTE:DATA:NOROOT,02dH
+; union <unnamed> volatile __io _A_USICR;
+_A_USICR:
+	DS 1
+
+        ASEGN ABSOLUTE:DATA:NOROOT,02eH
+; union <unnamed> volatile __io _A_USISR;
+_A_USISR:
+	DS 1
+
+        ASEGN ABSOLUTE:DATA:NOROOT,02fH
+; union <unnamed> volatile __io _A_USIDR;
+_A_USIDR:
+	DS 1
+
+        ASEGN ABSOLUTE:DATA:NOROOT,036H
+; union <unnamed> volatile __io _A_PINB;
+_A_PINB:
+	DS 1
+
+        ASEGN ABSOLUTE:DATA:NOROOT,037H
+; union <unnamed> volatile __io _A_DDRB;
+_A_DDRB:
+	DS 1
+
+        ASEGN ABSOLUTE:DATA:NOROOT,038H
+; union <unnamed> volatile __io _A_PORTB;
+_A_PORTB:
+	DS 1
+
+        ASEGN ABSOLUTE:DATA:NOROOT,052H
+; union <unnamed> volatile __io _A_TCNT0;
+_A_TCNT0:
+	DS 1
+
+        ASEGN ABSOLUTE:DATA:NOROOT,053H
+; union <unnamed> volatile __io _A_TCCR0;
+_A_TCCR0:
+	DS 1
+
+        ASEGN ABSOLUTE:DATA:NOROOT,058H
+; union <unnamed> volatile __io _A_TIFR;
+_A_TIFR:
+	DS 1
+
+        ASEGN ABSOLUTE:DATA:NOROOT,059H
+; union <unnamed> volatile __io _A_TIMSK;
+_A_TIMSK:
+	DS 1
+
+        ASEGN ABSOLUTE:DATA:NOROOT,05aH
+; union <unnamed> volatile __io _A_GIFR;
+_A_GIFR:
+	DS 1
+
+        ASEGN ABSOLUTE:DATA:NOROOT,05bH
+; union <unnamed> volatile __io _A_GIMSK;
+_A_GIMSK:
+	DS 1
+;    21 #include <inavr.h>
+;    22 #include "USI_UART_config.h"
+;    23 
+;    24 
+;    25 //********** USI UART Defines **********//
+;    26 
+;    27 #define DATA_BITS                 8
+;    28 #define START_BIT                 1
+;    29 #define STOP_BIT                  1
+;    30 #define HALF_FRAME                5
+;    31 
+;    32 #define USI_COUNTER_MAX_COUNT     16
+;    33 #define USI_COUNTER_SEED_TRANSMIT (USI_COUNTER_MAX_COUNT - HALF_FRAME)
+;    34 #define INTERRUPT_STARTUP_DELAY   (0x11 / TIMER_PRESCALER)
+;    35 #define TIMER0_SEED               (256 - ( (SYSTEM_CLOCK / BAUDRATE) / TIMER_PRESCALER ))
+;    36 
+;    37 #if ( (( (SYSTEM_CLOCK / BAUDRATE) / TIMER_PRESCALER ) * 3/2) > (256 - INTERRUPT_STARTUP_DELAY) )
+;    38     #define INITIAL_TIMER0_SEED       ( 256 - (( (SYSTEM_CLOCK / BAUDRATE) / TIMER_PRESCALER ) * 1/2) )
+;    39     #define USI_COUNTER_SEED_RECEIVE  ( USI_COUNTER_MAX_COUNT - (START_BIT + DATA_BITS) )
+;    40 #else
+;    41     #define INITIAL_TIMER0_SEED       ( 256 - (( (SYSTEM_CLOCK / BAUDRATE) / TIMER_PRESCALER ) * 3/2) )
+;    42     #define USI_COUNTER_SEED_RECEIVE  (USI_COUNTER_MAX_COUNT - DATA_BITS)
+;    43 #endif
+;    44 
+;    45 #define UART_RX_BUFFER_MASK ( UART_RX_BUFFER_SIZE - 1 )
+;    46 #if ( UART_RX_BUFFER_SIZE & UART_RX_BUFFER_MASK )
+;    47     #error RX buffer size is not a power of 2
+;    48 #endif
+;    49 
+;    50 #define UART_TX_BUFFER_MASK ( UART_TX_BUFFER_SIZE - 1 )
+;    51 #if ( UART_TX_BUFFER_SIZE & UART_TX_BUFFER_MASK )
+;    52     #error TX buffer size is not a power of 2
+;    53 #endif
+;    54 
+;    55 /* General defines */
+;    56 #define TRUE                      1
+;    57 #define FALSE                     0
+;    58 
+;    59 //********** Static Variables **********//
+;    60 
+
+        ASEGN REGVAR_AN:DATA:ROOT,0fH
+	DS 1
+;    61 __no_init __regvar static unsigned char USI_UART_TxData @ 15;   // Tells the compiler to store the byte to be transmitted in registry.
+;    62 
+
+        RSEG TINY_Z:DATA:NOROOT(0)
+	REQUIRE `?<Segment init: TINY_Z>`
+;    63 static unsigned char          UART_RxBuf[UART_RX_BUFFER_SIZE];  // UART buffers. Size is definable in the header file.
+; static unsigned char __tiny UART_RxBuf[4];
+UART_RxBuf:
+	DS 4
+	DS 1
+	DS 1
+	DS 4
+	DS 1
+	DS 1
+;    64 static volatile unsigned char UART_RxHead;
+;    65 static volatile unsigned char UART_RxTail;
+;    66 static unsigned char          UART_TxBuf[UART_TX_BUFFER_SIZE];
+;    67 static volatile unsigned char UART_TxHead;
+;    68 static volatile unsigned char UART_TxTail;
+;    69 
+;    70 static volatile union USI_UART_status                           // Status byte holding flags.
+;    71 {
+;    72     unsigned char status;
+;    73     struct
+;    74     {
+;    75         unsigned char ongoing_Transmission_From_Buffer:1;
+;    76         unsigned char ongoing_Transmission_Of_Package:1;
+;    77         unsigned char ongoing_Reception_Of_Package:1;
+;    78         unsigned char reception_Buffer_Overflow:1;
+;    79         unsigned char flag4:1;
+;    80         unsigned char flag5:1;
+;    81         unsigned char flag6:1;
+;    82         unsigned char flag7:1;
+;    83     };
+;    84 } USI_UART_status = {0};
+; static USI_UART_status volatile __tiny USI_UART_status;
+USI_UART_status:
+	DS 1
+;    85 
+;    86 
+;    87 //********** USI_UART functions **********//
+;    88 
+;    89 // Reverses the order of bits in a byte.
+;    90 // I.e. MSB is swapped with LSB, etc.
+
+        RSEG CODE:CODE:NOROOT(1)
+;    91 unsigned char Bit_Reverse( unsigned char x )
+;    92 {
+;    93     x = ((x >> 1) & 0x55) | ((x << 1) & 0xaa);
+; __nearfunc unsigned char Bit_Reverse(unsigned char);
+Bit_Reverse:
+	MOV	R17,R16
+	LSR	R17
+	ANDI	R17,0x55
+	LSL	R16
+	ANDI	R16,0xAA
+	OR	R16,R17
+;    94     x = ((x >> 2) & 0x33) | ((x << 2) & 0xcc);
+	MOV	R17,R16
+	LSR	R17
+	LSR	R17
+	ANDI	R17,0x33
+	LSL	R16
+	LSL	R16
+	ANDI	R16,0xCC
+	OR	R16,R17
+;    95     x = ((x >> 4) & 0x0f) | ((x << 4) & 0xf0);
+;    96     return x;    
+	MOV	R17,R16
+	SWAP	R17
+	ANDI	R17,0x0F
+	SWAP	R16
+	ANDI	R16,0xF0
+	OR	R16,R17
+	RET
+;    97 }
+;    98 
+;    99 // Flush the UART buffers.
+
+        RSEG CODE:CODE:NOROOT(1)
+;   100 void USI_UART_Flush_Buffers( void )  
+;   101 {  
+;   102     UART_RxTail = 0;
+; __nearfunc void USI_UART_Flush_Buffers();
+USI_UART_Flush_Buffers:
+	LDI	R30,UART_RxBuf
+	LDI	R16,0
+	STD	Z+5,R16
+;   103     UART_RxHead = 0;
+	STD	Z+4,R16
+;   104     UART_TxTail = 0;
+	STD	Z+11,R16
+;   105     UART_TxHead = 0;
+	STD	Z+10,R16
+;   106 }
+	RET
+;   107 
+;   108 // Initialise USI for UART transmission.
+
+        RSEG CODE:CODE:NOROOT(1)
+;   109 void USI_UART_Initialise_Transmitter( void )                              
+;   110 {
+;   111     __disable_interrupt();
+; __nearfunc void USI_UART_Initialise_Transmitter();
+USI_UART_Initialise_Transmitter:
+	CLI
+;   112     TCNT0  = 0x00;
+	LDI	R16,0
+	RCALL	??USI_UART_Initialise_Transmitter_0
+;   113     TCCR0  = (1<<PSR0)|(0<<CS02)|(0<<CS01)|(1<<CS00);         // Reset the prescaler and start Timer0.
+;   114     TIFR  |= (1<<TOV0);                                       // Clear Timer0 OVF interrupt flag.
+;   115     TIMSK |= (1<<TOIE0);                                      // Enable Timer0 OVF interrupt.
+;   116                                                                 
+;   117     USICR  = (0<<USISIE)|(1<<USIOIE)|                         // Enable USI Counter OVF interrupt.
+;   118              (0<<USIWM1)|(1<<USIWM0)|                         // Select Three Wire mode.
+;   119              (0<<USICS1)|(1<<USICS0)|(0<<USICLK)|             // Select Timer0 OVER as USI Clock source.
+;   120              (0<<USITC);                                           
+;   121              
+;   122     USIDR  = 0xFF;                                            // Make sure MSB is '1' before enabling USI_DO.
+	LDI	R16,255
+	OUT	0x0F,R16
+;   123     USISR  = 0xF0 |                                           // Clear all USI interrupt flags.
+;   124              0x0F;                                            // Preload the USI counter to generate interrupt at first USI clock.
+	OUT	0x0E,R16
+;   125     DDRB  |= (1<<PB1);                                        // Configure USI_DO as output.
+	SBI	0x17,0x01
+;   126                   
+;   127     USI_UART_status.ongoing_Transmission_From_Buffer = TRUE;
+	LDI	R30,USI_UART_status
+	LD	R16,Z
+	ORI	R16,0x01
+	ST	Z,R16
+;   128                   
+;   129     __enable_interrupt();
+	SEI
+;   130 }
+	RET
+??USI_UART_Initialise_Transmitter_0:
+	OUT	0x32,R16
+	LDI	R16,9
+	OUT	0x33,R16
+	IN	R16,0x38
+	ORI	R16,0x02
+	OUT	0x38,R16
+	IN	R16,0x39
+	ORI	R16,0x02
+	OUT	0x39,R16
+	LDI	R16,84
+	OUT	0x0D,R16
+	RET
+;   131 
+;   132 // Initialise USI for UART reception.
+;   133 // Note that this function only enables pinchange interrupt on the USI Data Input pin.
+;   134 // The USI is configured to read data within the pinchange interrupt.
+
+        RSEG CODE:CODE:NOROOT(1)
+;   135 void USI_UART_Initialise_Receiver( void )        
+;   136 {  
+;   137     PORTB |=   (1<<PB3)|(1<<PB2)|(1<<PB1)|(1<<PB0);         // Enable pull up on USI DO, DI and SCK pins. (And PB3 because of pin change interrupt)   
+;   138     DDRB  &= ~((1<<PB3)|(1<<PB2)|(1<<PB1)|(1<<PB0));        // Set USI DI, DO and SCK pins as inputs.  
+;   139     USICR  =  0;                                            // Disable USI.
+;   140     GIFR  |=  (1<<PCIF);                                    // Clear pin change interrupt flag.
+;   141     GIMSK |=  (1<<PCIE0);                                   // Enable pin change interrupt for PB3:0.
+;   142 }
+; __nearfunc void USI_UART_Initialise_Receiver();
+USI_UART_Initialise_Receiver:
+??USI_UART_Initialise_Receiver_0:
+	IN	R16,0x18
+	ORI	R16,0x0F
+	OUT	0x18,R16
+	IN	R16,0x17
+	ANDI	R16,0xF0
+	OUT	0x17,R16
+	LDI	R16,0
+	OUT	0x0D,R16
+	IN	R16,0x3A
+	ORI	R16,0x20
+	OUT	0x3A,R16
+	IN	R16,0x3B
+	ORI	R16,0x10
+	OUT	0x3B,R16
+	RET
+;   143 
+;   144 // Puts data in the transmission buffer, after reverseing the bits in the byte.
+;   145 // Initiates the transmission rutines if not already started.
+
+        RSEG CODE:CODE:NOROOT(1)
+;   146 void USI_UART_Transmit_Byte( unsigned char data )          
+;   147 {
+; __nearfunc void USI_UART_Transmit_Byte(unsigned char);
+USI_UART_Transmit_Byte:
+        FUNCALL USI_UART_Transmit_Byte, Bit_Reverse
+        LOCFRAME CSTACK, 2, STACK
+        LOCFRAME RSTACK, 2, STACK
+        FUNCALL USI_UART_Transmit_Byte, USI_UART_Initialise_Transmitter
+        LOCFRAME CSTACK, 2, STACK
+        LOCFRAME RSTACK, 2, STACK
+	ST	-Y,R24
+;   148     unsigned char tmphead;
+;   149 
+;   150     tmphead = ( UART_TxHead + 1 ) & UART_TX_BUFFER_MASK;        // Calculate buffer index.
+	LDI	R30,UART_RxBuf
+	LDD	R24,Z+10
+	INC	R24
+	ANDI	R24,0x03
+;   151     while ( tmphead == UART_TxTail );                           // Wait for free space in buffer.
+??USI_UART_Transmit_Byte_0:
+	LDD	R17,Z+11
+	CP	R24,R17
+	BREQ	??USI_UART_Transmit_Byte_0
+;   152     UART_TxBuf[tmphead] = Bit_Reverse(data);                    // Reverse the order of the bits in the data byte and store data in buffer.
+	RCALL	Bit_Reverse
+	LDI	R30,UART_RxBuf
+	SUBI	R30,250
+	ADD	R30,R24
+	ST	Z,R16
+;   153     UART_TxHead = tmphead;                                      // Store new index.
+	LDI	R30,UART_RxBuf
+	STD	Z+10,R24
+;   154     
+;   155     if ( !USI_UART_status.ongoing_Transmission_From_Buffer )    // Start transmission from buffer (if not already started).
+	LDD	R16,Z+12
+	SBRC	R16,0
+	RJMP	??USI_UART_Transmit_Byte_1
+;   156     {
+;   157         while ( USI_UART_status.ongoing_Reception_Of_Package ); // Wait for USI to finsh reading incoming data.
+??USI_UART_Transmit_Byte_2:
+	LDD	R16,Z+12
+	SBRC	R16,2
+	RJMP	??USI_UART_Transmit_Byte_2
+;   158         USI_UART_Initialise_Transmitter();              
+	RCALL	USI_UART_Initialise_Transmitter
+;   159     }
+;   160 }
+??USI_UART_Transmit_Byte_1:
+	LD	R24,Y+
+	RET
+;   161 
+;   162 // Returns a byte from the receive buffer. Waits if buffer is empty.
+
+        RSEG CODE:CODE:NOROOT(1)
+;   163 unsigned char USI_UART_Receive_Byte( void )                
+;   164 {
+;   165     unsigned char tmptail;
+;   166         
+;   167     while ( UART_RxHead == UART_RxTail );                 // Wait for incomming data 
+; __nearfunc unsigned char USI_UART_Receive_Byte();
+USI_UART_Receive_Byte:
+??USI_UART_Receive_Byte_0:
+        FUNCALL USI_UART_Receive_Byte, Bit_Reverse
+        LOCFRAME RSTACK, 2, STACK
+	RCALL	??USI_UART_Receive_Byte_1
+	BREQ	??USI_UART_Receive_Byte_0
+;   168     tmptail = ( UART_RxTail + 1 ) & UART_RX_BUFFER_MASK;  // Calculate buffer index 
+	LDD	R16,Z+5
+	INC	R16
+	ANDI	R16,0x03
+;   169     UART_RxTail = tmptail;                                // Store new index 
+	STD	Z+5,R16
+;   170     return Bit_Reverse(UART_RxBuf[tmptail]);              // Reverse the order of the bits in the data byte before it returns data from the buffer.
+	ADD	R30,R16
+	LD	R16,Z
+	RJMP	Bit_Reverse
+??USI_UART_Receive_Byte_1:
+	LDI	R30,UART_RxBuf
+	LDD	R16,Z+4
+	LDD	R17,Z+5
+	CP	R16,R17
+	RET
+;   171 }
+;   172 
+;   173 // Check if there is data in the receive buffer.
+
+        RSEG CODE:CODE:NOROOT(1)
+;   174 unsigned char USI_UART_Data_In_Receive_Buffer( void )        
+;   175 {
+;   176     return ( UART_RxHead != UART_RxTail );                // Return 0 (FALSE) if the receive buffer is empty.
+; __nearfunc unsigned char USI_UART_Data_In_Receive_Buffer();
+USI_UART_Data_In_Receive_Buffer:
+	RCALL	??USI_UART_Receive_Byte_1
+	BREQ	??USI_UART_Data_In_Receive_Buffer_0
+	LDI	R16,1
+	RET
+??USI_UART_Data_In_Receive_Buffer_0:
+	LDI	R16,0
+	RET
+;   177 }
+;   178 
+;   179 
+;   180 // ********** Interrupt Handlers ********** //
+;   181 
+;   182 // The pin change interrupt is used to detect USI_UART reseption.
+;   183 // It is here the USI is configured to sample the UART signal.
+;   184 #pragma vector=IO_PINS_vect                                       
+
+        RSEG CODE:CODE:NOROOT(1)
+;   185 __interrupt void IO_Pin_Change_ISR(void)                                
+;   186 {                                                                    
+; __nearfunc __interrupt void IO_Pin_Change_ISR();
+IO_Pin_Change_ISR:
+	ST	-Y,R30
+	ST	-Y,R17
+	ST	-Y,R16
+	IN	R17,0x3F
+;   187     if (!( PINB & (1<<PB0) ))                                     // If the USI DI pin is low, then it is likely that it
+	SBIC	0x16,0x00
+	RJMP	??IO_Pin_Change_ISR_0
+;   188     {                                                             //  was this pin that generated the pin change interrupt.
+;   189         TCNT0  = INTERRUPT_STARTUP_DELAY + INITIAL_TIMER0_SEED;   // Plant TIMER0 seed to match baudrate (incl interrupt start up time.).
+	LDI	R16,183
+	RCALL	??USI_UART_Initialise_Transmitter_0
+;   190         TCCR0  = (1<<PSR0)|(0<<CS02)|(0<<CS01)|(1<<CS00);         // Reset the prescaler and start Timer0.
+;   191         TIFR  |= (1<<TOV0);                                       // Clear Timer0 OVF interrupt flag.
+;   192         TIMSK |= (1<<TOIE0);                                      // Enable Timer0 OVF interrupt.
+;   193                                                                     
+;   194         USICR  = (0<<USISIE)|(1<<USIOIE)|                         // Enable USI Counter OVF interrupt.
+;   195                  (0<<USIWM1)|(1<<USIWM0)|                         // Select Three Wire mode.
+;   196                  (0<<USICS1)|(1<<USICS0)|(0<<USICLK)|             // Select Timer0 OVER as USI Clock source.
+;   197                  (0<<USITC);                                           
+;   198                                                                   // Note that enabling the USI will also disable the pin change interrupt.
+;   199         USISR  = 0xF0 |                                           // Clear all USI interrupt flags.
+;   200                  USI_COUNTER_SEED_RECEIVE;                        // Preload the USI counter to generate interrupt.
+	LDI	R16,248
+	OUT	0x0E,R16
+;   201                                                                   
+;   202         GIMSK &=  ~(1<<PCIE0);                                    // Disable pin change interrupt for PB3:0. 
+	IN	R16,0x3B
+	ANDI	R16,0xEF
+	OUT	0x3B,R16
+;   203         
+;   204         USI_UART_status.ongoing_Reception_Of_Package = TRUE;             
+	LDI	R30,USI_UART_status
+	LD	R16,Z
+	ORI	R16,0x04
+	ST	Z,R16
+;   205     }
+;   206 }
+??IO_Pin_Change_ISR_0:
+	OUT	0x3F,R17
+	LD	R16,Y+
+	LD	R17,Y+
+	LD	R30,Y+
+	RETI
+;   207 
+;   208 // The USI Counter Overflow interrupt is used for moving data between memmory and the USI data register.
+;   209 // The interrupt is used for both transmission and reception.
+;   210 #pragma vector=USI_OVF_vect                                             
+
+        RSEG CODE:CODE:NOROOT(1)
+;   211 __interrupt void USI_Counter_Overflow_ISR(void)                              
+;   212 {
+; __nearfunc __interrupt void USI_Counter_Overflow_ISR();
+USI_Counter_Overflow_ISR:
+	ST	-Y,R30
+	ST	-Y,R18
+	ST	-Y,R17
+	ST	-Y,R16
+	IN	R18,0x3F
+	REQUIRE	?Register_R15_is_global_regvar
+;   213     unsigned char tmphead,tmptail;
+;   214     
+;   215     // Check if we are running in Transmit mode.
+;   216     if( USI_UART_status.ongoing_Transmission_From_Buffer )      
+	LDI	R30,UART_RxBuf
+	LDD	R16,Z+12
+	SBRS	R16,0
+	RJMP	??USI_Counter_Overflow_ISR_0
+;   217     {
+;   218         // If ongoing transmission, then send second half of transmit data.
+;   219         if( USI_UART_status.ongoing_Transmission_Of_Package )   
+	LDD	R16,Z+12
+	SBRS	R16,1
+	RJMP	??USI_Counter_Overflow_ISR_1
+;   220         {                                   
+;   221             USI_UART_status.ongoing_Transmission_Of_Package = FALSE;    // Clear on-going package transmission flag.
+	LDD	R16,Z+12
+	ANDI	R16,0xFD
+	STD	Z+12,R16
+;   222             
+;   223             USISR = 0xF0 | (USI_COUNTER_SEED_TRANSMIT);                 // Load USI Counter seed and clear all USI flags.
+	LDI	R16,251
+	OUT	0x0E,R16
+;   224             USIDR = (USI_UART_TxData << 3) | 0x07;                      // Reload the USIDR with the rest of the data and a stop-bit.
+	MOV	R16,R15
+	LSL	R16
+	LSL	R16
+	LSL	R16
+	ORI	R16,0x07
+??USI_Counter_Overflow_ISR_2:
+	OUT	0x0F,R16
+	RJMP	??USI_Counter_Overflow_ISR_3
+;   225         }
+;   226         // Else start sendinbg more data or leave transmit mode.
+;   227         else
+;   228         {
+;   229             // If there is data in the transmit buffer, then send first half of data.
+;   230             if ( UART_TxHead != UART_TxTail )                           
+??USI_Counter_Overflow_ISR_1:
+	LDD	R16,Z+10
+	LDD	R17,Z+11
+	CP	R16,R17
+	LDD	R16,Z+12
+	BREQ	??USI_Counter_Overflow_ISR_4
+;   231             {
+;   232 //    TCNT0  = 0x00;// Give me time to fetch data before the USI starts sending.
+;   233                 USI_UART_status.ongoing_Transmission_Of_Package = TRUE; // Set on-going package transmission flag.
+	ORI	R16,0x02
+	STD	Z+12,R16
+;   234                 
+;   235                 tmptail = ( UART_TxTail + 1 ) & UART_TX_BUFFER_MASK;    // Calculate buffer index.
+	LDD	R16,Z+11
+	INC	R16
+	ANDI	R16,0x03
+;   236                 UART_TxTail = tmptail;                                  // Store new index.            
+	STD	Z+11,R16
+;   237                 USI_UART_TxData = UART_TxBuf[tmptail];                  // Read out the data that is to be sent. Note that the data must be bit reversed before sent.
+	SUBI	R30,250
+	ADD	R30,R16
+	LD	R15,Z
+;   238                                                                         // The bit reversing is moved to the application section to save time within the interrupt.
+;   239                 USISR  = 0xF0 | (USI_COUNTER_SEED_TRANSMIT);            // Load USI Counter seed and clear all USI flags.
+	LDI	R16,251
+	OUT	0x0E,R16
+;   240                 USIDR  = (USI_UART_TxData >> 2) | 0x80;                 // Copy (initial high state,) start-bit and 6 LSB of original data (6 MSB
+	MOV	R16,R15
+	LSR	R16
+	LSR	R16
+	ORI	R16,0x80
+	RJMP	??USI_Counter_Overflow_ISR_2
+;   241                                                                         //  of bit of bit reversed data).                
+;   242 //                TIFR  |= (1<<TOV0);                                     // Clear Timer0 OVF interrupt flag.
+;   243             }
+;   244             // Else enter receive mode.
+;   245             else
+;   246             {
+;   247                 USI_UART_status.ongoing_Transmission_From_Buffer = FALSE; 
+??USI_Counter_Overflow_ISR_4:
+	ANDI	R16,0xFE
+??USI_Counter_Overflow_ISR_5:
+	STD	Z+12,R16
+;   248                 
+;   249                 TCCR0  = (0<<CS02)|(0<<CS01)|(0<<CS00);                 // Stop Timer0.
+	RJMP	??USI_Counter_Overflow_ISR_6
+;   250                 PORTB |=   (1<<PB3)|(1<<PB2)|(1<<PB1)|(1<<PB0);         // Enable pull up on USI DO, DI and SCK pins. (And PB3 because of pin change interrupt)   
+;   251                 DDRB  &= ~((1<<PB3)|(1<<PB2)|(1<<PB1)|(1<<PB0));        // Set USI DI, DO and SCK pins as inputs.  
+;   252                 USICR  =  0;                                            // Disable USI.
+;   253                 GIFR  |=  (1<<PCIF);                                    // Clear pin change interrupt flag.
+;   254                 GIMSK |=  (1<<PCIE0);                                   // Enable pin change interrupt for PB3:0.
+;   255             }
+;   256         }
+;   257     }
+;   258     
+;   259     // Else running in receive mode.
+;   260     else                                                                
+;   261     {              
+;   262         USI_UART_status.ongoing_Reception_Of_Package = FALSE;           
+??USI_Counter_Overflow_ISR_0:
+	LDD	R16,Z+12
+	ANDI	R16,0xFB
+	STD	Z+12,R16
+;   263 
+;   264         tmphead     = ( UART_RxHead + 1 ) & UART_RX_BUFFER_MASK;        // Calculate buffer index.
+	LDD	R16,Z+4
+	INC	R16
+	ANDI	R16,0x03
+;   265         
+;   266         if ( tmphead == UART_RxTail )                                   // If buffer is full trash data and set buffer full flag.
+	LDD	R17,Z+5
+	CP	R16,R17
+	BRNE	??USI_Counter_Overflow_ISR_7
+;   267         {
+;   268             USI_UART_status.reception_Buffer_Overflow = TRUE;           // Store status to take actions elsewhere in the application code
+	LDD	R16,Z+12
+	ORI	R16,0x08
+	RJMP	??USI_Counter_Overflow_ISR_5
+;   269         }
+;   270         else                                                            // If there is space in the buffer then store the data.
+;   271         {
+;   272             UART_RxHead = tmphead;                                      // Store new index.
+??USI_Counter_Overflow_ISR_7:
+	STD	Z+4,R16
+;   273             UART_RxBuf[tmphead] = USIDR;                                // Store received data in buffer. Note that the data must be bit reversed before used. 
+	IN	R17,0x0F
+	ADD	R30,R16
+	ST	Z,R17
+;   274         }                                                               // The bit reversing is moved to the application section to save time within the interrupt.
+;   275                                                                 
+;   276         TCCR0  = (0<<CS02)|(0<<CS01)|(0<<CS00);                 // Stop Timer0.
+??USI_Counter_Overflow_ISR_6:
+	LDI	R16,0
+	OUT	0x33,R16
+;   277         PORTB |=   (1<<PB3)|(1<<PB2)|(1<<PB1)|(1<<PB0);         // Enable pull up on USI DO, DI and SCK pins. (And PB3 because of pin change interrupt)   
+;   278         DDRB  &= ~((1<<PB3)|(1<<PB2)|(1<<PB1)|(1<<PB0));        // Set USI DI, DO and SCK pins as inputs.  
+	RCALL	??USI_UART_Initialise_Receiver_0
+;   279         USICR  =  0;                                            // Disable USI.
+;   280         GIFR  |=  (1<<PCIF);                                    // Clear pin change interrupt flag.
+;   281         GIMSK |=  (1<<PCIE0);                                   // Enable pin change interrupt for PB3:0.
+;   282     }
+;   283     
+;   284 }
+??USI_Counter_Overflow_ISR_3:
+	OUT	0x3F,R18
+	LD	R16,Y+
+	LD	R17,Y+
+	LD	R18,Y+
+	LD	R30,Y+
+	RETI
+;   285 
+;   286 // Timer0 Overflow interrupt is used to trigger the sampling of signals on the USI ports.
+;   287 #pragma vector=TIMER0_OVF0_vect             
+
+        RSEG CODE:CODE:NOROOT(1)
+;   288 __interrupt void Timer0_OVF_ISR(void)
+;   289 {
+; __nearfunc __interrupt void Timer0_OVF_ISR();
+Timer0_OVF_ISR:
+	ST	-Y,R17
+	ST	-Y,R16
+	IN	R17,0x3F
+;   290     TCNT0 += TIMER0_SEED;                   // Reload the timer,
+	IN	R16,0x32
+	SUBI	R16,60
+	OUT	0x32,R16
+;   291                                             // current count is added for timing correction.
+;   292 }
+	OUT	0x3F,R17
+	LD	R16,Y+
+	LD	R17,Y+
+	RETI
+
+        ASEGN ABSOLUTE:DATA:NOROOT,01cH
+__?EECR:
+
+        ASEGN ABSOLUTE:DATA:NOROOT,01dH
+__?EEDR:
+
+        ASEGN ABSOLUTE:DATA:NOROOT,01eH
+__?EEARL:
+
+        COMMON INTVEC:CODE:ROOT(1)
+        ORG 4
+	RJMP	IO_Pin_Change_ISR
+
+        COMMON INTVEC:CODE:ROOT(1)
+        ORG 12
+	RJMP	Timer0_OVF_ISR
+
+        COMMON INTVEC:CODE:ROOT(1)
+        ORG 16
+	RJMP	USI_Counter_Overflow_ISR
+
+        RSEG INITTAB:CODE:NOROOT(0)
+`?<Segment init: TINY_Z>`:
+	DB	SFE(TINY_Z) - SFB(TINY_Z)
+	DB	SFB(TINY_Z)
+	DW	0
+	REQUIRE ?need_segment_init
+
+        END
+;   293 
+; 
+;     12 bytes in segment ABSOLUTE
+;    434 bytes in segment CODE
+;      4 bytes in segment INITTAB
+;      6 bytes in segment INTVEC
+;      1 byte  in segment REGVAR_AN
+;     13 bytes in segment TINY_Z
+; 
+;    440 bytes of CODE memory (+ 4 bytes shared)
+;     13 bytes of DATA memory (+ 13 bytes shared)
+;
+;Errors: none
+;Warnings: none
